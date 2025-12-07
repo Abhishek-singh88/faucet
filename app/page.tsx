@@ -85,7 +85,7 @@ export default function HomePage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded-lg bg-emerald-500 hover:bg-emerald-600 disabled:bg-emerald-700/60 disabled:cursor-not-allowed text-sm font-medium py-2.5 transition-colors"
+            className="cursor-pointer w-full rounded-lg bg-emerald-500 hover:bg-emerald-600 disabled:bg-emerald-700/60 disabled:cursor-not-allowed text-sm font-medium py-2.5 transition-colors"
           >
             {loading ? "Sending..." : `Get ${TOKEN_SYMBOL}`}
           </button>
