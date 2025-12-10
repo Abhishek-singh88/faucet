@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ethers } from "ethers";
-import { kv } from "@vercel/kv";
+import Redis from "ioredis";
 
 const RPC_URL = process.env.ARB_SEPOLIA_RPC_URL!;
 const PRIVATE_KEY = process.env.FAUCET_PRIVATE_KEY!;
 const TOKEN_ADDRESS = process.env.SLR_TOKEN_ADDRESS!;
 const DECIMALS = Number(process.env.SLR_DECIMALS || 18);
-const CLAIM_INTERVAL_HOURS = Number(process.env.CLAIM_INTERVAL_HOURS || 12);
-const CLAIM_INTERVAL_MS = CLAIM_INTERVAL_HOURS * 60 * 60 * 1000;
+const CLAIM_INTERVAL_MS = 12 * 60 * 60 * 1000;
 
 const erc20Abi = [
   "function transfer(address to, uint256 amount) external returns (bool)",
@@ -17,6 +16,8 @@ const erc20Abi = [
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
 const token = new ethers.Contract(TOKEN_ADDRESS, erc20Abi, wallet);
+
+const redis = new Redis(process.env.REDIS_URL!);
 
 export async function POST(req: NextRequest) {
   try {
@@ -30,12 +31,11 @@ export async function POST(req: NextRequest) {
     const normalized = address.toLowerCase();
     const claimKey = `claim:${normalized}`;
     
-    // Get last claim time from KV
-    const lastClaim = await kv.get<number>(claimKey);
+    const lastClaim = await redis.get(claimKey);
     const now = Date.now();
 
-    if (lastClaim && now - lastClaim < CLAIM_INTERVAL_MS) {
-      const remainingMs = CLAIM_INTERVAL_MS - (now - lastClaim);
+    if (lastClaim && now - Number(lastClaim) < CLAIM_INTERVAL_MS) {
+      const remainingMs = CLAIM_INTERVAL_MS - (now - Number(lastClaim));
       const remainingHours = (remainingMs / (60 * 60 * 1000)).toFixed(2);
       return NextResponse.json(
         { error: `Already claimed. Try again in ~${remainingHours} hours.` },
@@ -43,7 +43,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Check faucet balance
     const faucetBalance = await token.balanceOf(wallet.address);
     const amount = ethers.parseUnits("5", DECIMALS);
 
@@ -51,11 +50,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Faucet is empty" }, { status: 500 });
     }
 
-    // Send tokens
     const tx = await token.transfer(address, amount);
 
-    // Store claim time in KV with auto-expiry
-    await kv.set(claimKey, now, { ex: Math.floor(CLAIM_INTERVAL_MS / 1000) });
+    await redis.set(claimKey, now.toString(), "EX", Math.floor(CLAIM_INTERVAL_MS / 1000));
 
     return NextResponse.json({
       success: true,
@@ -69,18 +66,5 @@ export async function POST(req: NextRequest) {
       { error: "Internal faucet error: " + err.message },
       { status: 500 }
     );
-  }
-}
-
-export async function GET() {
-  try {
-    return NextResponse.json({
-      status: "ok",
-      network: "Arbitrum Sepolia",
-      token: TOKEN_ADDRESS,
-      faucetBalance: (await token.balanceOf(wallet.address)).toString(),
-    });
-  } catch (err) {
-    return NextResponse.json({ error: "Failed to load status" }, { status: 500 });
   }
 }
